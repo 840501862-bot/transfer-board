@@ -177,11 +177,39 @@
 <script>
 "use strict";
 /* ============== 常量 / DOM 引用 ============== */
-function loadRelay(){
-  try{ const v = (localStorage.getItem("relay_host_v1")||"").trim(); if(v) return v; }catch(e){}
-  return "http://127.0.0.1:8765";
+function loadRelayManual(){
+  try{ return (localStorage.getItem("relay_host_v1")||"").trim(); }catch(e){ return ""; }
 }
-let RELAY = loadRelay();   // 本地CORS中继地址：本机用 127.0.0.1:8765；手机/远程访问时填 http://电脑局域网IP:8765（见中继窗口提示）
+function loadRelay(){
+  const v = loadRelayManual();
+  return v || "http://127.0.0.1:8765";
+}
+let RELAY = loadRelay();   // 中继地址：本机 127.0.0.1:8765；外网/手机自动获取（启动时 autoRelay）
+/* 自动获取中继地址：未手动设置时，从 GitHub 拉取最新隧道地址（由「启动外网访问」自动发布） */
+async function autoRelay(){
+  const srcs = [
+    "https://raw.githubusercontent.com/840501862-bot/transfer-board/main/relay.json",
+    "https://840501862-bot.github.io/transfer-board/relay.json"
+  ];
+  const probe = async (u, ms) => {
+    const ctl = new AbortController();
+    const t = setTimeout(()=>ctl.abort(), ms);
+    try{ const r = await fetch(u, {method:"GET", signal:ctl.signal}); return r; }
+    finally{ clearTimeout(t); }
+  };
+  for(const u of srcs){
+    try{
+      const r = await probe(u, 6000);
+      if(!r.ok) continue;
+      const d = await r.json();
+      const cand = d && d.relay && String(d.relay).trim();
+      if(!cand) continue;
+      const c = await probe(cand+"/api/v3/time", 6000);
+      if(c.ok){ RELAY = cand; return true; }
+    }catch(e){ /* 尝试下一个来源 */ }
+  }
+  return false;
+}
 const $ = id => document.getElementById(id);
 const $masterRows = $("masterRows"), $configErr = $("configErr");
 const $overview = $("overview");
@@ -491,8 +519,19 @@ async function convertSpotToUMFutures(g){
 
 /* ============== 启动 ============== */
 renderConfig();
-if(loadMasters().some(m=>m && m.api_key && m.api_secret)) loadAll();
-else { $overview.innerHTML = '<div class="empty">未配置主账户。请在上方填写主账号 API Key。</div>'; }
+async function boot(){
+  if(!loadMasters().some(m=>m && m.api_key && m.api_secret)){
+    $overview.innerHTML = '<div class="empty">未配置主账户。请在上方填写主账号 API Key。</div>';
+    return;
+  }
+  // 手动设置过中继地址 → 直接用；否则自动获取外网/局域网最新地址
+  if(!loadRelayManual()){
+    const got = await autoRelay();
+    if(!got) setStatus("未能自动获取中继地址，已使用本机默认。手机/远程访问请点右上角「中继地址」手动设置。", "");
+  }
+  loadAll();
+}
+boot();
 </script>
 </body>
 </html>
