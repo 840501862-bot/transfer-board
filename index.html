@@ -25,6 +25,7 @@
   .wrap { max-width:960px; margin:0 auto; text-align:center; }
   header { position:relative; padding:16px 0 6px; }
   .cfg-btn { position:absolute; top:0; right:0; padding:8px 14px; font-size:13px; }
+  .relay-btn { position:absolute; top:0; right:118px; padding:8px 12px; font-size:12px; }
   h1 {
     display:inline-block; font-size:30px; font-weight:900; letter-spacing:3px;
     background:linear-gradient(90deg,#ffd76a 0%, #ff6b35 30%, #c0392b 55%, #ffd76a 100%);
@@ -137,6 +138,7 @@
 <body>
 
 <header class="wrap">
+  <button class="ghost relay-btn" id="btnRelay">中继地址</button>
   <button class="ghost cfg-btn" id="btnOpenConfig">+ 添加账户</button>
   <h1>币安钱包划转</h1>
   <div class="brandline">现 货 钱 包 → U 本 位 合 约 · 一 键 转 入</div>
@@ -175,8 +177,11 @@
 <script>
 "use strict";
 /* ============== 常量 / DOM 引用 ============== */
-const SAPI = "http://127.0.0.1:8765";   // 子账户sapi接口经本地中继转发到 https://api.binance.com（币安拒绝浏览器CORS预检，必须走中继）
-const FAPI = "https://fapi.binance.com";
+function loadRelay(){
+  try{ const v = (localStorage.getItem("relay_host_v1")||"").trim(); if(v) return v; }catch(e){}
+  return "http://127.0.0.1:8765";
+}
+let RELAY = loadRelay();   // 本地CORS中继地址：本机用 127.0.0.1:8765；手机/远程访问时填 http://电脑局域网IP:8765（见中继窗口提示）
 const $ = id => document.getElementById(id);
 const $masterRows = $("masterRows"), $configErr = $("configErr");
 const $overview = $("overview");
@@ -260,7 +265,7 @@ let serverRefMs=0, serverRefPerf=0, syncOk=false;
 async function ensureOffset(){
   if(syncOk && performance.now()-serverRefPerf<60000) return;
   try{
-    const r = await fetch(SAPI+"/api/v3/time", {method:"GET"});
+    const r = await fetch(RELAY+"/api/v3/time", {method:"GET"});
     const d = await r.json();
     const ms = Number(d.serverTime);
     if(ms>0){ serverRefMs=ms; serverRefPerf=performance.now(); syncOk=true; return; }
@@ -341,6 +346,16 @@ function collectConfig(){
 function openConfig(){ renderConfig(); $("cfgOverlay").classList.add("show"); }
 function closeConfig(){ $("cfgOverlay").classList.remove("show"); }
 $("btnOpenConfig").addEventListener("click", openConfig);
+$("btnRelay").addEventListener("click", ()=>{
+  const cur = loadRelay();
+  const v = prompt("中继地址（本机用 127.0.0.1:8765；手机/远程访问时填电脑局域网地址，如 http://192.168.1.100:8765）", cur);
+  if(v==null) return;
+  const nv = v.trim();
+  if(nv) localStorage.setItem("relay_host_v1", nv); else localStorage.removeItem("relay_host_v1");
+  RELAY = loadRelay();
+  setStatus("中继地址已设为 "+RELAY+"，正在重新加载…", "");
+  loadAll();
+});
 $("btnRefreshOv").addEventListener("click", async ()=>{ setStatus("正在加载账户…", ""); await loadAll(); });
 $("btnCfgCancel").addEventListener("click", closeConfig);
 $("cfgOverlay").addEventListener("click", e=>{ if(e.target.id==="cfgOverlay") closeConfig(); });
@@ -371,9 +386,9 @@ async function loadAll(){
   const groups = [];
   for(const m of masters){
     const g = {m, masterWallet:null, masterAvail:null, masterSpot:null, masterSpotAssets:{}, masterWarn:null};
-    // 1) 主账户余额（fapi 直连，经系统代理即可，不依赖中继）——独立加载，保证额度先显示；钱包余额取 U本位合约保证金余额（= 钱包余额 + 未实现盈亏）
+    // 1) 主账户余额（fapi 经本地中继转发到 fapi.binance.com）——独立加载，保证额度先显示；钱包余额取 U本位合约保证金余额（= 钱包余额 + 未实现盈亏）
     try{
-      const acc = await sapiFetch(m, "GET", FAPI+"/fapi/v2/account", "timestamp="+(await nowMs())+"&recvWindow=10000");
+      const acc = await sapiFetch(m, "GET", RELAY+"/fapi/v2/account", "timestamp="+(await nowMs())+"&recvWindow=10000");
       if(acc && typeof acc==="object" && acc.totalMarginBalance!==undefined){
         g.masterWallet = num(acc.totalMarginBalance);
         g.masterAvail = num(acc.availableBalance);
@@ -381,7 +396,7 @@ async function loadAll(){
     }catch(e){ g.masterWarn = "主账户余额接口(fapi.binance.com)不可达，余额显示 —；请确认 ANDYVPN 已连接（系统代理已指向 127.0.0.1:51081）后点「刷新数据」。"; }
     // 1b) 现货余额（api.binance.com 经本地中继）——显示该账户现货 USDT 可用余额，并记录全部现货资产供一键转入 U本位
     try{
-      const sa = await sapiFetch(m, "GET", SAPI+"/api/v3/account", "timestamp="+(await nowMs())+"&recvWindow=10000");
+      const sa = await sapiFetch(m, "GET", RELAY+"/api/v3/account", "timestamp="+(await nowMs())+"&recvWindow=10000");
       if(sa && Array.isArray(sa.balances)){
         const u = sa.balances.find(b=>b.asset==="USDT");
         g.masterSpot = u ? num(u.free) : 0;
@@ -463,7 +478,7 @@ async function convertSpotToUMFutures(g){
     const q = "type=MAIN_UMFUTURE&asset="+encodeURIComponent(a)+"&amount="+src[a]+
       "&timestamp="+(await nowMs())+"&recvWindow=10000";
     try{
-      const d = await sapiFetch(g.m, "POST", SAPI+"/sapi/v1/asset/transfer", q);
+      const d = await sapiFetch(g.m, "POST", RELAY+"/sapi/v1/asset/transfer", q);
       if(d && d.code!==undefined) throw new Error("code "+d.code+"："+(d.msg||""));
       done.push(a);
     }catch(e){
