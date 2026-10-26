@@ -185,28 +185,38 @@ function loadRelay(){
   return v || "http://127.0.0.1:8765";
 }
 let RELAY = loadRelay();   // 中继地址：本机 127.0.0.1:8765；外网/手机自动获取（启动时 autoRelay）
-/* 自动获取中继地址：未手动设置时，从 GitHub 拉取最新隧道地址（由「启动外网访问」自动发布） */
+/* 自动获取中继地址：未手动设置时，从 GitHub 拉取最新隧道地址（由「启动外网访问」自动发布）
+   用 <script> 标签加载 relay.js —— 不受浏览器跨域限制，手机任何网络都能拿到 */
+function loadRelayScript(url, timeoutMs){
+  return new Promise(resolve => {
+    let done = false;
+    const fin = ok => { if(!done){ done = true; resolve(ok); } };
+    const s = document.createElement("script");
+    s.src = url;
+    s.onload = () => fin(!!window.__autoRelayAddr__);
+    s.onerror = () => fin(false);
+    setTimeout(()=>fin(false), timeoutMs);
+    document.head.appendChild(s);
+  });
+}
 async function autoRelay(){
   const srcs = [
-    "https://raw.githubusercontent.com/840501862-bot/transfer-board/main/relay.json",
-    "https://840501862-bot.github.io/transfer-board/relay.json"
+    "https://raw.githubusercontent.com/840501862-bot/transfer-board/main/relay.js",
+    "https://840501862-bot.github.io/transfer-board/relay.js"
   ];
-  const probe = async (u, ms) => {
-    const ctl = new AbortController();
-    const t = setTimeout(()=>ctl.abort(), ms);
-    try{ const r = await fetch(u, {method:"GET", signal:ctl.signal}); return r; }
-    finally{ clearTimeout(t); }
-  };
+  const cands = [];
   for(const u of srcs){
+    try{ if(await loadRelayScript(u, 6000)){ if(window.__autoRelayAddr__) cands.push(window.__autoRelayAddr__); } }catch(e){}
+  }
+  // 对候选地址做连通性探测
+  for(const cand of cands){
     try{
-      const r = await probe(u, 6000);
-      if(!r.ok) continue;
-      const d = await r.json();
-      const cand = d && d.relay && String(d.relay).trim();
-      if(!cand) continue;
-      const c = await probe(cand+"/api/v3/time", 6000);
+      const ctl = new AbortController();
+      const t = setTimeout(()=>ctl.abort(), 6000);
+      const c = await fetch(cand+"/api/v3/time", {method:"GET", signal:ctl.signal});
+      clearTimeout(t);
       if(c.ok){ RELAY = cand; return true; }
-    }catch(e){ /* 尝试下一个来源 */ }
+    }catch(e){ /* 尝试下一个 */ }
   }
   return false;
 }
