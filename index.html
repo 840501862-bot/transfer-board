@@ -348,7 +348,7 @@ function closeConfig(){ $("cfgOverlay").classList.remove("show"); }
 $("btnOpenConfig").addEventListener("click", openConfig);
 $("btnRelay").addEventListener("click", ()=>{
   const cur = loadRelay();
-  const v = prompt("中继地址（本机用 127.0.0.1:8765；手机/远程访问时填电脑局域网地址，如 http://192.168.1.100:8765）", cur);
+  const v = prompt("中继地址\n本机：127.0.0.1:8765\n同一WiFi手机：http://电脑局域网IP:8765\n手机在外面(4G/5G)：https://xxx.trycloudflare.com（见「启动外网访问.bat」的隧道窗口）", cur);
   if(v==null) return;
   const nv = v.trim();
   if(nv) localStorage.setItem("relay_host_v1", nv); else localStorage.removeItem("relay_host_v1");
