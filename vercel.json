@@ -1,5 +1,8 @@
 {
   "rewrites": [
     { "source": "/(.*)", "destination": "/api/relay" }
-  ]
+  ],
+  "functions": {
+    "api/relay.js": { "regions": ["hkg1", "sin1"] }
+  }
 }
