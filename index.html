@@ -200,6 +200,19 @@ function loadRelayScript(url, timeoutMs){
   });
 }
 async function autoRelay(){
+  const WORKER_RELAY = "https://transfer-relay.840501862.workers.dev";  // 云端固定转发（手机开VPN即可用，电脑不用开机）
+  const probe = async (u, ms) => {
+    const ctl = new AbortController();
+    const t = setTimeout(()=>ctl.abort(), ms);
+    try{ const r = await fetch(u, {method:"GET", signal:ctl.signal}); return r; }
+    finally{ clearTimeout(t); }
+  };
+  // 1) 云端 Worker：固定地址，最优先（有网络/VPN 即可用）
+  try{
+    const c = await probe(WORKER_RELAY+"/api/v3/time", 6000);
+    if(c.ok){ RELAY = WORKER_RELAY; return true; }
+  }catch(e){ /* 继续 */ }
+  // 2) 隧道 script 获取（需要电脑开机 + 隧道在跑）
   const srcs = [
     "https://raw.githubusercontent.com/840501862-bot/transfer-board/main/relay.js",
     "https://840501862-bot.github.io/transfer-board/relay.js"
@@ -208,13 +221,9 @@ async function autoRelay(){
   for(const u of srcs){
     try{ if(await loadRelayScript(u, 6000)){ if(window.__autoRelayAddr__) cands.push(window.__autoRelayAddr__); } }catch(e){}
   }
-  // 对候选地址做连通性探测
   for(const cand of cands){
     try{
-      const ctl = new AbortController();
-      const t = setTimeout(()=>ctl.abort(), 6000);
-      const c = await fetch(cand+"/api/v3/time", {method:"GET", signal:ctl.signal});
-      clearTimeout(t);
+      const c = await probe(cand+"/api/v3/time", 6000);
       if(c.ok){ RELAY = cand; return true; }
     }catch(e){ /* 尝试下一个 */ }
   }
