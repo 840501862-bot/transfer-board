@@ -200,18 +200,26 @@ function loadRelayScript(url, timeoutMs){
   });
 }
 async function autoRelay(){
-  const WORKER_RELAY = "https://transfer-relay.840501862.workers.dev";  // 云端固定转发（手机开VPN即可用，电脑不用开机）
+  // 云端固定转发地址（优先尝试；手机开 VPN 即可用，电脑不用开机）
+  const CLOUD_RELAYS = [
+    "https://transfer-relay-8405.vercel.app",       // ① Vercel 云端转发（首选，香港区域）
+    "https://transfer-relay.840501862.workers.dev"  // ② Cloudflare Worker（备用）
+  ];
   const probe = async (u, ms) => {
     const ctl = new AbortController();
     const t = setTimeout(()=>ctl.abort(), ms);
-    try{ const r = await fetch(u, {method:"GET", signal:ctl.signal}); return r; }
+    try{ return await fetch(u, {method:"GET", signal:ctl.signal}); }
     finally{ clearTimeout(t); }
   };
-  // 1) 云端 Worker：固定地址，最优先（有网络/VPN 即可用）
-  try{
-    const c = await probe(WORKER_RELAY+"/api/v3/time", 6000);
-    if(c.ok){ RELAY = WORKER_RELAY; return true; }
-  }catch(e){ /* 继续 */ }
+  // 1) 云端转发：固定地址，最优先（只有返回真实 serverTime 才算可用）
+  for(const r of CLOUD_RELAYS){
+    try{
+      const c = await probe(r+"/api/v3/time", 6000);
+      if(c.ok){
+        try{ const j = await c.json(); if(j && j.serverTime){ RELAY = r; return true; } }catch(e){}
+      }
+    }catch(e){ /* 尝试下一个 */ }
+  }
   // 2) 隧道 script 获取（需要电脑开机 + 隧道在跑）
   const srcs = [
     "https://raw.githubusercontent.com/840501862-bot/transfer-board/main/relay.js",
@@ -224,7 +232,9 @@ async function autoRelay(){
   for(const cand of cands){
     try{
       const c = await probe(cand+"/api/v3/time", 6000);
-      if(c.ok){ RELAY = cand; return true; }
+      if(c.ok){
+        try{ const j = await c.json(); if(j && j.serverTime){ RELAY = cand; return true; } }catch(e){}
+      }
     }catch(e){ /* 尝试下一个 */ }
   }
   return false;
