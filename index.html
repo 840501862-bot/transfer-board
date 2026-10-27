@@ -199,28 +199,46 @@ function loadRelayScript(url, timeoutMs){
     document.head.appendChild(s);
   });
 }
+/* 云端固定转发地址（手机开 VPN 即可用，电脑不用开机） */
+const CLOUD_RELAYS = [
+  "https://transfer-relay-8405.vercel.app",       // ① Vercel 云端转发（首选，法兰克福区域，已验证）
+  "https://transfer-relay.840501862.workers.dev"  // ② Cloudflare Worker（备用）
+];
 async function autoRelay(){
-  // 云端固定转发地址（优先尝试；手机开 VPN 即可用，电脑不用开机）
-  const CLOUD_RELAYS = [
-    "https://transfer-relay-8405.vercel.app",       // ① Vercel 云端转发（首选，香港区域）
-    "https://transfer-relay.840501862.workers.dev"  // ② Cloudflare Worker（备用）
-  ];
   const probe = async (u, ms) => {
     const ctl = new AbortController();
     const t = setTimeout(()=>ctl.abort(), ms);
     try{ return await fetch(u, {method:"GET", signal:ctl.signal}); }
     finally{ clearTimeout(t); }
   };
-  // 1) 云端转发：固定地址，最优先（只有返回真实 serverTime 才算可用）
-  for(const r of CLOUD_RELAYS){
+  const usable = async u => {
     try{
-      const c = await probe(r+"/api/v3/time", 6000);
+      const c = await probe(u+"/api/v3/time", 6000);
       if(c.ok){
-        try{ const j = await c.json(); if(j && j.serverTime){ RELAY = r; return true; } }catch(e){}
+        try{ const j = await c.json(); return !!(j && j.serverTime); }catch(e){ return false; }
       }
-    }catch(e){ /* 尝试下一个 */ }
+    }catch(e){}
+    return false;
+  };
+  // ① 同域：当前页面跑在 Vercel 上 → 直接同源转发（最稳，无需跨域）
+  try{
+    if(/vercel\.app$/.test(location.hostname) && await usable(location.origin)){
+      RELAY = location.origin; return true;
+    }
+  }catch(e){}
+  // ② 云端固定地址（只有返回真实 serverTime 才算可用）
+  for(const r of CLOUD_RELAYS){
+    if(await usable(r)){ RELAY = r; return true; }
   }
-  // 2) 隧道 script 获取（需要电脑开机 + 隧道在跑）
+  // ③ 手动设置过的地址（探测有效才用）
+  const m = loadRelayManual();
+  if(m){
+    try{
+      const h = /^https?:/i.test(m) ? m : "http://" + m;
+      if(await usable(h)){ RELAY = h; return true; }
+    }catch(e){}
+  }
+  // ④ 隧道 script 获取（需要电脑开机 + 隧道在跑）
   const srcs = [
     "https://raw.githubusercontent.com/840501862-bot/transfer-board/main/relay.js",
     "https://840501862-bot.github.io/transfer-board/relay.js"
@@ -230,12 +248,7 @@ async function autoRelay(){
     try{ if(await loadRelayScript(u, 6000)){ if(window.__autoRelayAddr__) cands.push(window.__autoRelayAddr__); } }catch(e){}
   }
   for(const cand of cands){
-    try{
-      const c = await probe(cand+"/api/v3/time", 6000);
-      if(c.ok){
-        try{ const j = await c.json(); if(j && j.serverTime){ RELAY = cand; return true; } }catch(e){}
-      }
-    }catch(e){ /* 尝试下一个 */ }
+    if(await usable(cand)){ RELAY = cand; return true; }
   }
   return false;
 }
@@ -553,11 +566,9 @@ async function boot(){
     $overview.innerHTML = '<div class="empty">未配置主账户。请在上方填写主账号 API Key。</div>';
     return;
   }
-  // 手动设置过中继地址 → 直接用；否则自动获取外网/局域网最新地址
-  if(!loadRelayManual()){
-    const got = await autoRelay();
-    if(!got) setStatus("未能自动获取中继地址，已使用本机默认。手机/远程访问请点右上角「中继地址」手动设置。", "");
-  }
+  // 中继地址：优先云端（Vercel 同域/云端固定地址），其次手动设置、隧道、最后本机默认
+  const got = await autoRelay();
+  if(!got) setStatus("未能自动获取可用中继地址，已使用本机默认。手机/远程访问请点右上角「中继地址」手动设置。", "");
   loadAll();
 }
 boot();
